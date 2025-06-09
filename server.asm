@@ -1,5 +1,6 @@
 bits 64
 
+%define SYS_read 0
 %define SYS_write 1
 %define SYS_exit 60
 %define SYS_socket 41
@@ -94,16 +95,63 @@ accept_connection:
     mov rdx, peer_len
     syscall
 
+    cmp rax, 0
+    jl error
+
     mov [client_socket], eax
+
+    mov rax, SYS_read
+    mov rdi, [client_socket]
+    mov rsi, req_buf
+    mov rdx, 1024
+    syscall
+
+    cmp dword [req_buf], 'GET '
+    jne skip_count
+    cmp byte [req_buf + 4], '/'
+    jne skip_count
+    cmp byte [req_buf+5], ' '
+    jne skip_count
+
+    inc qword [n_conn]
+
+skip_count:
+    mov rax, [n_conn]
+    lea rsi, [n_conn_buf + 21]
+    mov rbx, 10
+
+convert_loop:
+    xor rdx, rdx
+    div rbx
+    add dl, '0'
+    dec rsi
+    mov [rsi], dl
+    test rax, rax
+    jnz convert_loop
+
+    lea rcx, n_conn_buf + 22
+    sub rcx, rsi
+    mov r9, rcx
+    mov r8, rsi
 
     mov rax, SYS_write
     mov rdi, [client_socket]
-    mov rsi, welcome_msg
-    mov rdx, welcome_msg_len
+    mov rsi, welcome_p1_msg
+    mov rdx, welcome_p1_msg_len
     syscall
 
-    cmp rax, 0
-    jl error
+    mov rax, SYS_write
+    mov rdi, [client_socket]
+    mov rdx, rcx
+    mov rsi, r8
+    mov rdx, r9
+    syscall
+
+    mov rax, SYS_write
+    mov rdi, [client_socket]
+    mov rsi, welcome_p2_msg
+    mov rdx, welcome_p2_msg_len
+    syscall 
 
     mov rax, SYS_close
     mov rdi, [client_socket]
@@ -117,6 +165,8 @@ error:
     mov rsi, error_msg
     mov rdx, error_msg_len
     syscall
+
+    call exit
 
 exit:
     mov rax, SYS_exit
@@ -139,11 +189,14 @@ listen_socket_msg_len equ $ - listen_socket_msg
 accept_socket_msg db 'Server ready for connections...', 10
 accept_socket_msg_len equ $ - accept_socket_msg
 
-welcome_msg db 'HTTP/1.1 200 OK', 13, 10
+welcome_p1_msg db 'HTTP/1.1 200 OK', 13, 10
             db 'Content-Type: text/html', 13, 10
             db 'Connection: close', 13, 10, 13, 10
-            db '<h1>Welcome from assembly</h1>', 10
-welcome_msg_len equ $ - welcome_msg
+            db '<h1>Welcome from assembly - visitor #'
+welcome_p1_msg_len equ $ - welcome_p1_msg
+
+welcome_p2_msg db '</h1>', 10, 0
+welcome_p2_msg_len equ $ - welcome_p2_msg
 
 error_msg db 'Error !', 10
 error_msg_len equ $ - error_msg
@@ -166,4 +219,7 @@ sockaddr_in_peer:
 sockaddr_in_peer_len equ $ - sockaddr_in_peer
 
 section .bss
-peer_len  resd 1    
+peer_len  resd 1
+n_conn resq 1
+n_conn_buf resb 22
+req_buf resb 1024
